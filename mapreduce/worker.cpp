@@ -40,7 +40,7 @@ public:
 
 //定义的两个函数指针用于动态加载动态库里的map和reduce函数
 typedef vector<KeyValue> (*MapFunc)(KeyValue kv);
-typedef vector<string> (*ReduceFunc)(vector<KeyValue> kvs, int reduceTaskIdx);
+typedef vector<string> (*ReduceFunc)(vector<KeyValue> kvs);
 MapFunc mapF;
 ReduceFunc reduceF;
 
@@ -177,27 +177,39 @@ vector<KeyValue> Myshuffle(int reduceTaskNum){
     string path;
     vector<string> str;
     str.clear();
-    vector<string> filename = getAllfile(".", reduceTaskNum);
-    unordered_map<string, string> hash;
-    for(int i = 0; i < filename.size(); i++){
-        path = filename[i];
-        char text[path.size() + 1];
-        strcpy(text, path.c_str());
-        KeyValue kv = getContent(text);
-        string context = kv.value;
-        vector<string> retStr = split(context, ' ');
-        str.insert(str.end(), retStr.begin(), retStr.end());
+    vector<string> filenames = getAllfile(".", reduceTaskNum);
+    unordered_map<string, int> hash;
+
+    for(const auto& filename : filenames){
+        cout << "Reading file: " << filename << endl;
+        ifstream file(filename);
+        if (!file.is_open()) {
+            cerr << "Error opening file: " << filename << endl;
+            continue;
+        }
+        string line;
+        while (getline(file, line)) {
+            //[Hello,1  Hi,1  Hello,1] -> [Hello, 2  Hi, 1]
+            vector<string> kvPairs = split(line, ' '); // 将行内容按空格分割成多个键值对
+            for (const auto& kvPair : kvPairs) {
+                string key = split(kvPair); // 获取逗号前的部分作为键
+                string value = kvPair.substr(kvPair.find(',') + 1); // 获取逗号后的部分作为值
+                hash[key] += stoi(value); // 将值累加到对应键的列表中
+            }
+        }
+        file.close();
     }
-    for(const auto& a : str){
-        hash[split(a)] += "1";
-    }
+
+    //aggregate the same keys,from [Hello, 11  Hi, 1] to [Hello,2  Hi,1]
     vector<KeyValue> retKvs;
-    KeyValue tmpKv;
-    for(const auto& a : hash){
-        tmpKv.key = a.first;
-        tmpKv.value = a.second;
-        retKvs.push_back(tmpKv);
+    for (const auto& entry : hash) {
+        KeyValue kv;
+        kv.key = entry.first;
+        kv.value = to_string(entry.second);
+        retKvs.push_back(kv);
     }
+
+    //Ascending the words based on key
     sort(retKvs.begin(), retKvs.end(), [](KeyValue& kv1, KeyValue& kv2){
         return kv1.key < kv2.key;
     });
@@ -304,13 +316,17 @@ void* reduceWorker(void* arg){
         pthread_mutex_unlock(&map_mutex);
 
         //取得reduce任务，读取对应文件，shuffle后调用reduceFunc进行reduce处理
+        //Myshuffle 函数：single worker - 负责读取所有与某个 Reduce任务相关的中间文件，并将这些文件中的键值对聚合到一起
+        //reduceF 函数：aggregate results from several workers - 对聚合后的键值对进行处理，计算每个键（单词）在所有相关中间文件中出现的总次数，并返回一个字符串列表，表示每个键及其对应的出现次数。
         vector<KeyValue> kvs = Myshuffle(reduceTaskIdx);
-        vector<string> ret = reduceF(kvs, reduceTaskIdx);
+        vector<string> ret = reduceF(kvs);
         vector<string> str;
-        for(int i = 0; i < kvs.size(); i++){
-            str.push_back(kvs[i].key + " " + ret[i]);
+        for(const auto& result : ret){
+            str.push_back(result);
         }
-        string filename = "mr-out-" + to_string(reduceTaskIdx);
+
+        const string outputDir = "output/";
+        string filename = outputDir + "mr-out-" + to_string(reduceTaskIdx);
         int fd = open(filename.c_str(), O_WRONLY | O_CREAT | O_APPEND, 0664);
         myWrite(fd, str);
         close(fd);
@@ -323,7 +339,7 @@ void* reduceWorker(void* arg){
 void removeOutputFiles(){
     string path;
     for(int i = 0; i < MAX_REDUCE_NUM; i++){
-        path = "mr-out-" + to_string(i);
+        path = string("output/") + "mr-out-" + to_string(i);
         int ret = access(path.c_str(), F_OK);
         if(ret == 0) remove(path.c_str());
     }
@@ -360,7 +376,7 @@ int main(){
     map_task_num = work_client.call<int>("getMapNum").val();
     reduce_task_num = work_client.call<int>("getReduceNum").val();
     removeFiles();          //若有，则清理上次输出的中间文件
-    removeOutputFiles();    //清理上次输出的最终文件
+    removeOutputFiles(); // 清除上次保存的输出文件
 
     //创建多个map及reduce的worker线程
     pthread_t tidMap[map_task_num];

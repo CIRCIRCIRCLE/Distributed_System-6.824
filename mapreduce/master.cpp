@@ -154,7 +154,7 @@ void* Master::waitReduceTask(void* arg){
         printf(" reduce%d is timeout\n", reduce->runningReduceWork[reduce->curReduceIndex]);
         reduce->curReduceIndex++;
         for(auto a : reduce->m_list) printf(" after insert %s\n", a);
-        reduce->m_assign_lock.unlock();
+        reduce->m_assign_lock.pthread_cond_timedwaitunlock();
         return NULL;
     }
     printf("%d reduce is completed\n", reduce->runningReduceWork[reduce->curReduceIndex]);
