@@ -7,7 +7,7 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include "locker.h"
-#include "../buttonrpc/buttonrpc.hpp"
+#include "../buttonrpc_edit/buttonrpc.hpp"
 
 #define COMMOM_PORT 1234
 #define HEART_BEART_PERIOD 100000
